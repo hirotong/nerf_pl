@@ -30,8 +30,6 @@ def sample_pdf(bins, weights, N_importance, det=False, eps=1e-5):
     pdf = weights / torch.sum(weights, -1, keepdim=True) # (N_rays, N_samples_)
     cdf = torch.cumsum(pdf, -1) # (N_rays, N_samples), cumulative distribution function
     cdf = torch.cat([torch.zeros_like(cdf[: ,:1]), cdf], -1)  # (N_rays, N_samples_+1) 
-                                                               # padded to 0~1 inclusive
-
     if det:
         u = torch.linspace(0, 1, N_importance, device=bins.device)
         u = u.expand(N_rays, N_importance)
@@ -49,10 +47,7 @@ def sample_pdf(bins, weights, N_importance, det=False, eps=1e-5):
 
     denom = cdf_g[...,1]-cdf_g[...,0]
     denom[denom<eps] = 1 # denom equals 0 means a bin has weight 0, in which case it will not be sampled
-                         # anyway, therefore any value for it is fine (set to 1 here)
-
-    samples = bins_g[...,0] + (u-cdf_g[...,0])/denom * (bins_g[...,1]-bins_g[...,0])
-    return samples
+    return bins_g[...,0] + (u-cdf_g[...,0])/denom * (bins_g[...,1]-bins_g[...,0])
 
 
 def render_rays(models,
@@ -125,11 +120,12 @@ def render_rays(models,
         for i in range(0, B, chunk):
             # Embed positions by chunk
             xyz_embedded = embedding_xyz(xyz_[i:i+chunk])
-            if not weights_only:
-                xyzdir_embedded = torch.cat([xyz_embedded,
-                                             dir_embedded[i:i+chunk]], 1)
-            else:
-                xyzdir_embedded = xyz_embedded
+            xyzdir_embedded = (
+                xyz_embedded
+                if weights_only
+                else torch.cat([xyz_embedded, dir_embedded[i : i + chunk]], 1)
+            )
+
             out_chunks += [model(xyzdir_embedded, sigma_only=weights_only)]
 
         out = torch.cat(out_chunks, 0)
@@ -158,7 +154,6 @@ def render_rays(models,
         weights = \
             alphas * torch.cumprod(alphas_shifted, -1)[:, :-1] # (N_rays, N_samples_)
         weights_sum = weights.sum(1) # (N_rays), the accumulated opacity along the rays
-                                     # equals "1 - (1-a1)(1-a2)...(1-an)" mathematically
         if weights_only:
             return weights
 
@@ -170,6 +165,7 @@ def render_rays(models,
             rgb_final = rgb_final + 1-weights_sum.unsqueeze(-1)
 
         return rgb_final, depth_final, weights
+
 
 
     # Extract models from lists
@@ -187,19 +183,20 @@ def render_rays(models,
 
     # Sample depth points
     z_steps = torch.linspace(0, 1, N_samples, device=rays.device) # (N_samples)
-    if not use_disp: # use linear sampling in depth space
-        z_vals = near * (1-z_steps) + far * z_steps
-    else: # use linear sampling in disparity space
-        z_vals = 1/(1/near * (1-z_steps) + 1/far * z_steps)
+    z_vals = (
+        1 / (1 / near * (1 - z_steps) + 1 / far * z_steps)
+        if use_disp
+        else near * (1 - z_steps) + far * z_steps
+    )
 
     z_vals = z_vals.expand(N_rays, N_samples)
-    
+
     if perturb > 0: # perturb sampling depths (z_vals)
         z_vals_mid = 0.5 * (z_vals[: ,:-1] + z_vals[: ,1:]) # (N_rays, N_samples-1) interval mid points
         # get intervals between samples
         upper = torch.cat([z_vals_mid, z_vals[: ,-1:]], -1)
         lower = torch.cat([z_vals[: ,:1], z_vals_mid], -1)
-        
+
         perturb_rand = perturb * torch.rand(z_vals.shape, device=rays.device)
         z_vals = lower + (upper - lower) * perturb_rand
 

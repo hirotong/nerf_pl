@@ -34,11 +34,11 @@ class BlenderDataset(Dataset):
         self.near = 2.0
         self.far = 6.0
         self.bounds = np.array([self.near, self.far])
-        
+
         # ray directions for all pixels, same for all images (same H, W, focal)
         self.directions = \
             get_ray_directions(h, w, self.focal) # (h, w, 3)
-            
+
         if self.split == 'train': # create buffer of all rays and rgb data
             self.image_paths = []
             self.poses = []
@@ -57,7 +57,7 @@ class BlenderDataset(Dataset):
                 img = img.view(4, -1).permute(1, 0) # (h*w, 4) RGBA
                 img = img[:, :3]*img[:, -1:] + (1-img[:, -1:]) # blend A to RGB
                 self.all_rgbs += [img]
-                
+
                 rays_o, rays_d = get_rays(self.directions, c2w) # both (h*w, 3)
 
                 self.all_rays += [torch.cat([rays_o, rays_d, 
@@ -74,36 +74,28 @@ class BlenderDataset(Dataset):
     def __len__(self):
         if self.split == 'train':
             return len(self.all_rays)
-        if self.split == 'val':
-            return 8 # only validate 8 images (to support <=8 gpus)
-        return len(self.meta['frames'])
+        return 8 if self.split == 'val' else len(self.meta['frames'])
 
     def __getitem__(self, idx):
-        if self.split == 'train': # use data in the buffers
-            sample = {'rays': self.all_rays[idx],
-                      'rgbs': self.all_rgbs[idx]}
+        if self.split == 'train':
+            return {'rays': self.all_rays[idx], 'rgbs': self.all_rgbs[idx]}
 
-        else: # create data for each image separately
-            frame = self.meta['frames'][idx]
-            c2w = torch.FloatTensor(frame['transform_matrix'])[:3, :4]
 
-            img = Image.open(os.path.join(self.root_dir, f"{frame['file_path']}.png"))
-            img = img.resize(self.img_wh, Image.LANCZOS)
-            img = self.transform(img) # (4, H, W)
-            valid_mask = (img[-1]>0).flatten() # (H*W) valid color area
-            img = img.view(4, -1).permute(1, 0) # (H*W, 4) RGBA
-            img = img[:, :3]*img[:, -1:] + (1-img[:, -1:]) # blend A to RGB
+        frame = self.meta['frames'][idx]
+        c2w = torch.FloatTensor(frame['transform_matrix'])[:3, :4]
 
-            rays_o, rays_d = get_rays(self.directions, c2w)
+        img = Image.open(os.path.join(self.root_dir, f"{frame['file_path']}.png"))
+        img = img.resize(self.img_wh, Image.LANCZOS)
+        img = self.transform(img) # (4, H, W)
+        valid_mask = (img[-1]>0).flatten() # (H*W) valid color area
+        img = img.view(4, -1).permute(1, 0) # (H*W, 4) RGBA
+        img = img[:, :3]*img[:, -1:] + (1-img[:, -1:]) # blend A to RGB
 
-            rays = torch.cat([rays_o, rays_d, 
-                              self.near*torch.ones_like(rays_o[:, :1]),
-                              self.far*torch.ones_like(rays_o[:, :1])],
-                              1) # (H*W, 8)
+        rays_o, rays_d = get_rays(self.directions, c2w)
 
-            sample = {'rays': rays,
-                      'rgbs': img,
-                      'c2w': c2w,
-                      'valid_mask': valid_mask}
+        rays = torch.cat([rays_o, rays_d, 
+                          self.near*torch.ones_like(rays_o[:, :1]),
+                          self.far*torch.ones_like(rays_o[:, :1])],
+                          1) # (H*W, 8)
 
-        return sample
+        return {'rays': rays, 'rgbs': img, 'c2w': c2w, 'valid_mask': valid_mask}

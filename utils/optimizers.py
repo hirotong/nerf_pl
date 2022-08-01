@@ -6,15 +6,15 @@ import itertools as it
 class RAdam(Optimizer):
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, degenerated_to_sgd=True):
-        if not 0.0 <= lr:
-            raise ValueError("Invalid learning rate: {}".format(lr))
-        if not 0.0 <= eps:
-            raise ValueError("Invalid epsilon value: {}".format(eps))
+        if lr < 0.0:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        if eps < 0.0:
+            raise ValueError(f"Invalid epsilon value: {eps}")
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
+            raise ValueError(f"Invalid beta parameter at index 0: {betas[0]}")
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
-        
+            raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
+
         self.degenerated_to_sgd = degenerated_to_sgd
         if isinstance(params, (list, tuple)) and len(params) > 0 and isinstance(params[0], dict):
             for param in params:
@@ -28,10 +28,7 @@ class RAdam(Optimizer):
 
     def step(self, closure=None):
 
-        loss = None
-        if closure is not None:
-            loss = closure()
-
+        loss = closure() if closure is not None else None
         for group in self.param_groups:
 
             for p in group['params']:
@@ -97,15 +94,15 @@ class RAdam(Optimizer):
 class PlainRAdam(Optimizer):
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, degenerated_to_sgd=True):
-        if not 0.0 <= lr:
-            raise ValueError("Invalid learning rate: {}".format(lr))
-        if not 0.0 <= eps:
-            raise ValueError("Invalid epsilon value: {}".format(eps))
+        if lr < 0.0:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        if eps < 0.0:
+            raise ValueError(f"Invalid epsilon value: {eps}")
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
+            raise ValueError(f"Invalid beta parameter at index 0: {betas[0]}")
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
-                    
+            raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
+
         self.degenerated_to_sgd = degenerated_to_sgd
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
 
@@ -116,10 +113,7 @@ class PlainRAdam(Optimizer):
 
     def step(self, closure=None):
 
-        loss = None
-        if closure is not None:
-            loss = closure()
-
+        loss = closure() if closure is not None else None
         for group in self.param_groups:
 
             for p in group['params']:
@@ -173,15 +167,15 @@ class PlainRAdam(Optimizer):
 class AdamW(Optimizer):
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, warmup = 0):
-        if not 0.0 <= lr:
-            raise ValueError("Invalid learning rate: {}".format(lr))
-        if not 0.0 <= eps:
-            raise ValueError("Invalid epsilon value: {}".format(eps))
+        if lr < 0.0:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        if eps < 0.0:
+            raise ValueError(f"Invalid epsilon value: {eps}")
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
+            raise ValueError(f"Invalid beta parameter at index 0: {betas[0]}")
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
-        
+            raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
+
         defaults = dict(lr=lr, betas=betas, eps=eps,
                         weight_decay=weight_decay, warmup = warmup)
         super(AdamW, self).__init__(params, defaults)
@@ -190,10 +184,7 @@ class AdamW(Optimizer):
         super(AdamW, self).__setstate__(state)
 
     def step(self, closure=None):
-        loss = None
-        if closure is not None:
-            loss = closure()
-
+        loss = closure() if closure is not None else None
         for group in self.param_groups:
 
             for p in group['params']:
@@ -226,14 +217,14 @@ class AdamW(Optimizer):
                 denom = exp_avg_sq.sqrt().add_(group['eps'])
                 bias_correction1 = 1 - beta1 ** state['step']
                 bias_correction2 = 1 - beta2 ** state['step']
-                
+
                 if group['warmup'] > state['step']:
                     scheduled_lr = 1e-8 + state['step'] * group['lr'] / group['warmup']
                 else:
                     scheduled_lr = group['lr']
 
                 step_size = scheduled_lr * math.sqrt(bias_correction2) / bias_correction1
-                
+
                 if group['weight_decay'] != 0:
                     p_data_fp32.add_(-group['weight_decay'] * scheduled_lr, p_data_fp32)
 
@@ -269,11 +260,11 @@ class Ranger(Optimizer):
         #parameter checks
         if not 0.0 <= alpha <= 1.0:
             raise ValueError(f'Invalid slow update rate: {alpha}')
-        if not 1 <= k:
+        if k < 1:
             raise ValueError(f'Invalid lookahead steps: {k}')
-        if not lr > 0:
+        if lr <= 0:
             raise ValueError(f'Invalid Learning Rate: {lr}')
-        if not eps > 0:
+        if eps <= 0:
             raise ValueError(f'Invalid eps: {eps}')
 
         #parameter comments:
@@ -288,18 +279,12 @@ class Ranger(Optimizer):
         #adjustable threshold
         self.N_sma_threshhold = N_sma_threshhold
 
-        #now we can get to work...
-        #removed as we now use step from RAdam...no need for duplicate step counting
-        #for group in self.param_groups:
-        #    group["step_counter"] = 0
-            #print("group step counter init")
-
         #look ahead params
         self.alpha = alpha
         self.k = k 
 
         #radam buffer for state
-        self.radam_buffer = [[None,None,None] for ind in range(10)]
+        self.radam_buffer = [[None,None,None] for _ in range(10)]
 
         #self.first_run_check=0
 
@@ -320,13 +305,6 @@ class Ranger(Optimizer):
 
 
     def step(self, closure=None):
-        loss = None
-        #note - below is commented out b/c I have other work that passes back the loss as a float, and thus not a callable closure.  
-        #Uncomment if you need to use the actual closure...
-
-        #if closure is not None:
-            #loss = closure()
-
         #Evaluate averages and grad, update param tensors
         for group in self.param_groups:
 
@@ -402,4 +380,4 @@ class Ranger(Optimizer):
                     slow_p.add_(self.alpha, p.data - slow_p)  #(fast weights - slow weights) * alpha
                     p.data.copy_(slow_p)  #copy interpolated weights to RAdam param tensor
 
-        return loss
+        return None

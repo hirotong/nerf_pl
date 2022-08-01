@@ -48,9 +48,7 @@ def average_poses(poses):
     # 5. Compute the y axis (as z and x are normalized, y is already of norm 1)
     y = np.cross(z, x) # (3)
 
-    pose_avg = np.stack([x, y, z, center], 1) # (3, 4)
-
-    return pose_avg
+    return np.stack([x, y, z, center], 1)
 
 
 def center_poses(poses):
@@ -177,7 +175,6 @@ class LLFFDataset(Dataset):
         poses_bounds = np.load(os.path.join(self.root_dir,
                                             'poses_bounds.npy')) # (N_images, 17)
         self.image_paths = sorted(glob.glob(os.path.join(self.root_dir, 'images/*')))
-                        # load full resolution image then resize
         if self.split in ['train', 'val']:
             assert len(poses_bounds) == len(self.image_paths), \
                 'Mismatch between number of images and number of poses! Please rerun COLMAP!'
@@ -189,33 +186,29 @@ class LLFFDataset(Dataset):
         H, W, self.focal = poses[0, :, -1] # original intrinsics, same for all images
         assert H*self.img_wh[0] == W*self.img_wh[1], \
             f'You must set @img_wh to have the same aspect ratio as ({W}, {H}) !'
-        
+
         self.focal *= self.img_wh[0]/W
 
         # Step 2: correct poses
         # Original poses has rotation in form "down right back", change to "right up back"
         # See https://github.com/bmild/nerf/issues/34
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
-                # (N_images, 3, 4) exclude H, W, focal
         self.poses, self.pose_avg = center_poses(poses)
         distances_from_center = np.linalg.norm(self.poses[..., 3], axis=1)
         val_idx = np.argmin(distances_from_center) # choose val image as the closest to
-                                                   # center image
-
         # Step 3: correct scale so that the nearest depth is at a little more than 1.0
         # See https://github.com/bmild/nerf/issues/34
         near_original = self.bounds.min()
         scale_factor = near_original*0.75 # 0.75 is the default parameter
-                                          # the nearest depth is at 1/0.75=1.33
         self.bounds /= scale_factor
         self.poses[..., 3] /= scale_factor
 
         # ray directions for all pixels, same for all images (same H, W, focal)
         self.directions = \
             get_ray_directions(self.img_wh[1], self.img_wh[0], self.focal) # (H, W, 3)
-            
+
         if self.split == 'train': # create buffer of all rays and rgb data
-                                  # use first N_images-1 to train, the LAST is val
+                              # use first N_images-1 to train, the LAST is val
             self.all_rays = []
             self.all_rgbs = []
             for i, image_path in enumerate(self.image_paths):
@@ -231,44 +224,43 @@ class LLFFDataset(Dataset):
                 img = self.transform(img) # (3, h, w)
                 img = img.view(3, -1).permute(1, 0) # (h*w, 3) RGB
                 self.all_rgbs += [img]
-                
+
                 rays_o, rays_d = get_rays(self.directions, c2w) # both (h*w, 3)
-                if not self.spheric_poses:
+                if self.spheric_poses:
+                    near = self.bounds.min()
+                    far = min(8 * near, self.bounds.max()) # focus on central object only
+
+                else:
                     near, far = 0, 1
                     rays_o, rays_d = get_ndc_rays(self.img_wh[1], self.img_wh[0],
                                                   self.focal, 1.0, rays_o, rays_d)
                                      # near plane is always at 1.0
                                      # near and far in NDC are always 0 and 1
                                      # See https://github.com/bmild/nerf/issues/34
-                else:
-                    near = self.bounds.min()
-                    far = min(8 * near, self.bounds.max()) # focus on central object only
-
                 self.all_rays += [torch.cat([rays_o, rays_d, 
                                              near*torch.ones_like(rays_o[:, :1]),
                                              far*torch.ones_like(rays_o[:, :1])],
                                              1)] # (h*w, 8)
-                                 
+
             self.all_rays = torch.cat(self.all_rays, 0) # ((N_images-1)*h*w, 8)
             self.all_rgbs = torch.cat(self.all_rgbs, 0) # ((N_images-1)*h*w, 3)
-        
+
         elif self.split == 'val':
             print('val image is', self.image_paths[val_idx])
             self.c2w_val = self.poses[val_idx]
             self.image_path_val = self.image_paths[val_idx]
 
-        else: # for testing, create a parametric rendering path
-            if self.split.endswith('train'): # test on training set
-                self.poses_test = self.poses
-            elif not self.spheric_poses:
-                focus_depth = 3.5 # hardcoded, this is numerically close to the formula
-                                  # given in the original repo. Mathematically if near=1
-                                  # and far=infinity, then this number will converge to 4
-                radii = np.percentile(np.abs(self.poses[..., 3]), 90, axis=0)
-                self.poses_test = create_spiral_poses(radii, focus_depth)
-            else:
-                radius = 1.1 * self.bounds.min()
-                self.poses_test = create_spheric_poses(radius)
+        elif self.split.endswith('train'): # test on training set
+            self.poses_test = self.poses
+        elif not self.spheric_poses:
+            focus_depth = 3.5 # hardcoded, this is numerically close to the formula
+                              # given in the original repo. Mathematically if near=1
+                              # and far=infinity, then this number will converge to 4
+            radii = np.percentile(np.abs(self.poses[..., 3]), 90, axis=0)
+            self.poses_test = create_spiral_poses(radii, focus_depth)
+        else:
+            radius = 1.1 * self.bounds.min()
+            self.poses_test = create_spheric_poses(radius)
 
     def define_transforms(self):
         self.transform = T.ToTensor()
@@ -276,9 +268,7 @@ class LLFFDataset(Dataset):
     def __len__(self):
         if self.split == 'train':
             return len(self.all_rays)
-        if self.split == 'val':
-            return self.val_num
-        return len(self.poses_test)
+        return self.val_num if self.split == 'val' else len(self.poses_test)
 
     def __getitem__(self, idx):
         if self.split == 'train': # use data in the buffers

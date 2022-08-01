@@ -123,7 +123,7 @@ if __name__ == "__main__":
                                     dataset.white_back)
 
         img_pred = results['rgb_fine'].view(h, w, 3).cpu().numpy()
-        
+
         if args.save_depth:
             depth_pred = results['depth_fine'].view(h, w).cpu().numpy()
             depth_pred = np.nan_to_num(depth_pred)
@@ -141,9 +141,9 @@ if __name__ == "__main__":
             rgbs = sample['rgbs']
             img_gt = rgbs.view(h, w, 3)
             psnrs += [metrics.psnr(img_gt, img_pred).item()]
-        
+
     imageio.mimsave(os.path.join(dir_name, f'{args.scene_name}.gif'), imgs, fps=30)
-    
+
     if psnrs:
         mean_psnr = np.mean(psnrs)
         print(f'Mean PSNR : {mean_psnr:.2f}')
